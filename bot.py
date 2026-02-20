@@ -219,5 +219,6 @@ async def on_message(message):
             msg = await message.channel.send("No valid plays found.")
             current_slate.append(msg)
 
-
+ 
 client.run(DISCORD_TOKEN)
+
