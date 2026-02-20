@@ -188,14 +188,23 @@ async def on_message(message):
     if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
         return
 
-    # 🔒 CHANNEL RESTRICTION
-    ALLOWED_CHANNEL_ID = 1474078126630768822
+    # 🔒 CHANNEL RESTRICTION (Main + Test)
+    ALLOWED_CHANNELS = [
+        1474078126630768822,  # Main Server Slate Channel
+        1471792196582637728   # Test Server Slate Channel
+    ]
 
-    if message.channel.id != ALLOWED_CHANNEL_ID:
-        return
+   if message.channel.id not in ALLOWED_CHANNELS:
+    return
 
-    # 🔥 SLATE COMMAND
-    if message.content.startswith("!slate"):
+# 🧪 HEALTH CHECK
+if message.content.strip().lower() == "ping":
+    await message.channel.send("pong")
+    return
+
+# 🔥 SLATE COMMAND
+if message.content.startswith("!slate"):
+
 
         raw_text = message.content.replace("!slate", "").strip()
 
@@ -232,5 +241,6 @@ async def on_message(message):
             current_slate.append(msg)
 
 client.run(DISCORD_TOKEN)
+
 
 
