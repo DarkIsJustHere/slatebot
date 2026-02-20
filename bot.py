@@ -8,30 +8,30 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 RW_ROLE_NAME = "RW Official"
 ALLOWED_CHANNEL_IDS = [
     1471792196582637728,  # test
-    # add main channel ID here if needed
 ]
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.guilds = True
 intents.members = True
 
 client = discord.Client(intents=intents)
 
 
-# ==============================
-# 4+ CLASSIFICATION (LOCKED)
-# ==============================
+# =============================
+# 4+ CLASSIFICATION
+# =============================
 def classify_4plus(wins, total):
     if total == 0:
         return "normal"
 
     pct = wins / total
 
-    if (pct >= 0.93 and total >= 40) or (pct >= 0.95 and total >= 30):
+    # Nuke tier
+    if pct >= 0.93 and total >= 40:
         return "nuke"
 
-    if total <= 25 and 18 <= wins <= 22:
+    # Caution patterns based on your historical data
+    if total <= 25 and wins in [18, 19, 20, 21, 22]:
         return "caution"
 
     if 0.83 <= pct <= 0.89 and total >= 25:
@@ -40,12 +40,12 @@ def classify_4plus(wins, total):
     return "normal"
 
 
-# ==============================
+# =============================
 # TOTALS UNIT SIZING
-# ==============================
+# =============================
 def get_totals_units(wins, total):
     if total == 0:
-        return 1.0
+        return 1
 
     pct = wins / total
 
@@ -53,16 +53,16 @@ def get_totals_units(wins, total):
         if pct >= 0.95:
             return 2.5
         elif pct >= 0.91:
-            return 2.0
+            return 2
         elif pct >= 0.86:
             return 1.5
         elif pct >= 0.81:
             return 1.25
         else:
-            return 1.0
+            return 1
     else:
         if pct >= 0.95:
-            return 2.0
+            return 2
         elif pct >= 0.91:
             return 1.75
         elif pct >= 0.86:
@@ -70,7 +70,7 @@ def get_totals_units(wins, total):
         elif pct >= 0.81:
             return 1.25
         else:
-            return 1.0
+            return 1
 
 
 def format_units(u):
@@ -79,135 +79,148 @@ def format_units(u):
     return f"{u}U"
 
 
-# ==============================
-# LEAGUE NORMALIZATION
-# ==============================
-def normalize_league(league):
-    league = league.lower()
+# =============================
+# LEAGUE CLEANUP
+# =============================
+def normalize_league(name):
+    name = name.lower()
 
-    if "elite" in league:
+    if "elite" in name:
         return "ELITE"
-    if "setka" in league:
+    if "setka" in name:
         return "SETKA"
-    if "cup" in league and "setka" not in league:
-        return "CUP"
-    if "czech" in league:
+    if "czech" in name:
         return "CZECH"
+    if "cup" in name:
+        return "CUP"
 
-    return league.upper()
+    return name.upper()
 
 
-# ==============================
+# =============================
 # READY
-# ==============================
+# =============================
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
 
 
-# ==============================
-# MESSAGE HANDLER
-# ==============================
+# =============================
+# MAIN MESSAGE HANDLER
+# =============================
 @client.event
 async def on_message(message):
 
     if message.author == client.user:
         return
 
-    # Channel restriction
     if message.channel.id not in ALLOWED_CHANNEL_IDS:
         return
 
-    # Role restriction
     if not any(role.name == RW_ROLE_NAME for role in message.author.roles):
         return
 
-    # Ping test
-    if message.content.strip().lower() == "ping":
+    if message.content.lower().strip() == "ping":
         await message.channel.send("pong")
         return
 
     if not message.attachments:
         return
 
-    # Find CSV attachment
-    csv_attachment = None
+    csv_file = None
     for attachment in message.attachments:
-        if ".csv" in attachment.filename.lower():
-            csv_attachment = attachment
+        if attachment.filename.lower().endswith(".csv"):
+            csv_file = attachment
             break
 
-    if not csv_attachment:
+    if not csv_file:
         return
 
-    try:
-        file_bytes = await csv_attachment.read()
-        file_text = file_bytes.decode("utf-8", errors="ignore").lstrip("\ufeff")
-    except:
-        return
+    file_bytes = await csv_file.read()
+    file_text = file_bytes.decode("utf-8", errors="ignore").lstrip("\ufeff")
 
-    try:
-        reader = csv.DictReader(StringIO(file_text))
-    except:
-        return
+    reader = csv.DictReader(StringIO(file_text))
 
     four_plus = {}
     totals = {}
 
     for row in reader:
 
-        try:
-            league = normalize_league(row.get("League", ""))
-            pst_time_raw = row.get("Time (Pacific)", "")
-            est_time_raw = row.get("Time (Eastern)", "")
-            p1 = row.get("Player 1", "")
-            p2 = row.get("Player 2", "")
-            play = row.get("Play", "")
-            history = row.get("History", "")
-        except:
-            continue
+        league = normalize_league(row.get("League", "").strip())
+        pst_time = row.get("Time (Pacific)", "").strip()
+        est_time = row.get("Time (Eastern)", "").strip()
+        p1 = row.get("Player 1", "").strip()
+        p2 = row.get("Player 2", "").strip()
+        play = row.get("Play", "").strip().upper()
+        history = row.get("History", "").strip()
 
-        if not history or "(" not in history:
+        if "(" not in history:
             continue
 
         try:
-            wins = int(history.split("(")[1].split("/")[0])
+            raw_wins = int(history.split("(")[1].split("/")[0])
             total = int(history.split("/")[1].split(")")[0])
         except:
             continue
 
-        pst_time = pst_time_raw.split(" ")[1] if " " in pst_time_raw else pst_time_raw
-        est_time = est_time_raw.split(" ")[1] if " " in est_time_raw else est_time_raw
+        # Clean times but KEEP AM/PM
+        if " " in pst_time:
+            pst_time = pst_time.split(" ", 1)[1]
+        if " " in est_time:
+            est_time = est_time.split(" ", 1)[1]
 
         key = f"{league}-{p1}-{p2}-{est_time}"
 
-        # 4+ SET
+        # =============================
+        # 4+ SET HANDLING
+        # =============================
         if "4+" in play:
+
+            # Convert sweep rate to 4+ rate
+            wins = total - raw_wins
+
             if key not in four_plus:
                 classification = classify_4plus(wins, total)
                 four_plus[key] = (
-                    league, p1, p2, est_time, pst_time, wins, total, classification
+                    league, p1, p2, est_time, pst_time,
+                    wins, total, classification
                 )
 
-        # TOTALS
+            continue
+
+        # =============================
+        # TOTALS HANDLING
+        # =============================
         if play in ["OVER", "UNDER"]:
-            if key not in four_plus:
-                units = get_totals_units(wins, total)
-                totals[key] = (
-                    league, p1, p2, play, units, est_time, pst_time, wins, total
-                )
 
+            # Skip if 4+ exists for same match
+            if key in four_plus:
+                continue
+
+            wins = raw_wins
+            units = get_totals_units(wins, total)
+
+            totals[key] = (
+                league, p1, p2, play,
+                units, est_time, pst_time,
+                wins, total
+            )
+
+    # =============================
+    # BUILD OUTPUT
+    # =============================
     output = ""
 
     if four_plus:
-        output += "4+ PLAYS 🔥\n"
+        output += "4+ PLAYS 🔥\n\n"
+
         for v in four_plus.values():
-            league, p1, p2, est, pst, wins, total, classification = v
+            league, p1, p2, est, pst, wins, total, tier = v
 
             emoji = ""
-            if classification == "nuke":
+            if tier == "nuke":
                 emoji = " ☢️"
-            elif classification == "caution":
+            elif tier == "caution":
                 emoji = " ⚠️"
 
             output += (
@@ -217,7 +230,8 @@ async def on_message(message):
             )
 
     if totals:
-        output += "TOTALS 🔥\n"
+        output += "TOTALS 🔥\n\n"
+
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
 
@@ -229,11 +243,7 @@ async def on_message(message):
             )
 
     if output:
-        try:
-            await message.delete()
-        except:
-            pass
-
+        await message.delete()
         await message.channel.send(output.strip())
 
 
