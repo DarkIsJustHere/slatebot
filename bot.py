@@ -190,21 +190,20 @@ async def on_message(message):
 
     # 🔒 CHANNEL RESTRICTION (Main + Test)
     ALLOWED_CHANNELS = [
-        1474078126630768822,  # Main Server Slate Channel
-        1471792196582637728   # Test Server Slate Channel
+        1474078126630768822,
+        1471792196582637728
     ]
 
-   if message.channel.id not in ALLOWED_CHANNELS:
-    return
+    if message.channel.id not in ALLOWED_CHANNELS:
+        return
 
-# 🧪 HEALTH CHECK
-if message.content.strip().lower() == "ping":
-    await message.channel.send("pong")
-    return
+    # 🧪 HEALTH CHECK
+    if message.content.strip().lower() == "ping":
+        await message.channel.send("pong")
+        return
 
-# 🔥 SLATE COMMAND
-if message.content.startswith("!slate"):
-
+    # 🔥 SLATE COMMAND
+    if message.content.startswith("!slate"):
 
         raw_text = message.content.replace("!slate", "").strip()
 
@@ -241,6 +240,7 @@ if message.content.startswith("!slate"):
             current_slate.append(msg)
 
 client.run(DISCORD_TOKEN)
+
 
 
 
