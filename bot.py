@@ -6,7 +6,10 @@ from io import StringIO
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 RW_ROLE_NAME = "RW Official"
-ALLOWED_CHANNEL_ID = 1471792196582637728  # ← change if needed
+ALLOWED_CHANNEL_IDS = [
+    1471792196582637728,  # test
+    # add main channel ID here if needed
+]
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -25,15 +28,12 @@ def classify_4plus(wins, total):
 
     pct = wins / total
 
-    # ☢️ NUKE
     if (pct >= 0.93 and total >= 40) or (pct >= 0.95 and total >= 30):
         return "nuke"
 
-    # ⚠️ Small sample strong band
     if total <= 25 and 18 <= wins <= 22:
         return "caution"
 
-    # ⚠️ Mid tier consistency band
     if 0.83 <= pct <= 0.89 and total >= 25:
         return "caution"
 
@@ -84,19 +84,21 @@ def format_units(u):
 # ==============================
 def normalize_league(league):
     league = league.lower()
+
     if "elite" in league:
         return "ELITE"
-    if "cup" in league and "setka" not in league:
-        return "CUP"
     if "setka" in league:
         return "SETKA"
+    if "cup" in league and "setka" not in league:
+        return "CUP"
     if "czech" in league:
         return "CZECH"
+
     return league.upper()
 
 
 # ==============================
-# BOT READY
+# READY
 # ==============================
 @client.event
 async def on_ready():
@@ -113,7 +115,7 @@ async def on_message(message):
         return
 
     # Channel restriction
-    if message.channel.id != ALLOWED_CHANNEL_ID:
+    if message.channel.id not in ALLOWED_CHANNEL_IDS:
         return
 
     # Role restriction
@@ -125,34 +127,57 @@ async def on_message(message):
         await message.channel.send("pong")
         return
 
-    # CSV detection
     if not message.attachments:
         return
 
-    attachment = message.attachments[0]
+    # Find CSV attachment
+    csv_attachment = None
+    for attachment in message.attachments:
+        if ".csv" in attachment.filename.lower():
+            csv_attachment = attachment
+            break
 
-    if not attachment.filename.endswith(".csv"):
+    if not csv_attachment:
         return
 
-    file_bytes = await attachment.read()
-    file_text = file_bytes.decode("utf-8")
+    try:
+        file_bytes = await csv_attachment.read()
+        file_text = file_bytes.decode("utf-8", errors="ignore").lstrip("\ufeff")
+    except:
+        return
 
-    reader = csv.DictReader(StringIO(file_text))
+    try:
+        reader = csv.DictReader(StringIO(file_text))
+    except:
+        return
 
     four_plus = {}
     totals = {}
 
     for row in reader:
-        league = normalize_league(row["League"])
-        pst_time = row["Time (Pacific)"].split(" ")[1]
-        est_time = row["Time (Eastern)"].split(" ")[1]
-        p1 = row["Player 1"]
-        p2 = row["Player 2"]
-        play = row["Play"]
 
-        history = row["History"]
-        wins = int(history.split("(")[1].split("/")[0])
-        total = int(history.split("/")[1].split(")")[0])
+        try:
+            league = normalize_league(row.get("League", ""))
+            pst_time_raw = row.get("Time (Pacific)", "")
+            est_time_raw = row.get("Time (Eastern)", "")
+            p1 = row.get("Player 1", "")
+            p2 = row.get("Player 2", "")
+            play = row.get("Play", "")
+            history = row.get("History", "")
+        except:
+            continue
+
+        if not history or "(" not in history:
+            continue
+
+        try:
+            wins = int(history.split("(")[1].split("/")[0])
+            total = int(history.split("/")[1].split(")")[0])
+        except:
+            continue
+
+        pst_time = pst_time_raw.split(" ")[1] if " " in pst_time_raw else pst_time_raw
+        est_time = est_time_raw.split(" ")[1] if " " in est_time_raw else est_time_raw
 
         key = f"{league}-{p1}-{p2}-{est_time}"
 
@@ -160,17 +185,18 @@ async def on_message(message):
         if "4+" in play:
             if key not in four_plus:
                 classification = classify_4plus(wins, total)
-                four_plus[key] = (league, p1, p2, est_time, pst_time, wins, total, classification)
+                four_plus[key] = (
+                    league, p1, p2, est_time, pst_time, wins, total, classification
+                )
 
         # TOTALS
         if play in ["OVER", "UNDER"]:
-            if key not in four_plus:  # 4+ overrides totals
+            if key not in four_plus:
                 units = get_totals_units(wins, total)
-                totals[key] = (league, p1, p2, play, units, est_time, pst_time, wins, total)
+                totals[key] = (
+                    league, p1, p2, play, units, est_time, pst_time, wins, total
+                )
 
-    # ==============================
-    # BUILD OUTPUT
-    # ==============================
     output = ""
 
     if four_plus:
@@ -184,16 +210,30 @@ async def on_message(message):
             elif classification == "caution":
                 emoji = " ⚠️"
 
-            output += f"{league} – {p1} vs {p2} @ {est} EST / {pst} PST ({wins}/{total}){emoji}\n\n"
+            output += (
+                f"{league} – {p1} vs {p2} @ "
+                f"{est} EST / {pst} PST "
+                f"({wins}/{total}){emoji}\n\n"
+            )
 
     if totals:
         output += "TOTALS 🔥\n"
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
-            output += f"{league} – {p1} vs {p2} {play} {format_units(units)} @ {est} EST / {pst} PST ({wins}/{total})\n\n"
+
+            output += (
+                f"{league} – {p1} vs {p2} {play} "
+                f"{format_units(units)} @ "
+                f"{est} EST / {pst} PST "
+                f"({wins}/{total})\n\n"
+            )
 
     if output:
-        await message.delete()
+        try:
+            await message.delete()
+        except:
+            pass
+
         await message.channel.send(output.strip())
 
 
