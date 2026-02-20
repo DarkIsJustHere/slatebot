@@ -1,13 +1,14 @@
 import discord
 import os
 import csv
+import re
 from io import StringIO
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 RW_ROLE_NAME = "RW Official"
 ALLOWED_CHANNEL_IDS = [
-    1471792196582637728,  # test
+    1471792196582637728,  # test channel
 ]
 
 intents = discord.Intents.default()
@@ -15,6 +16,16 @@ intents.message_content = True
 intents.members = True
 
 client = discord.Client(intents=intents)
+
+
+# =============================
+# SAFE RECORD EXTRACTION
+# =============================
+def extract_record(history):
+    match = re.search(r"\((\d+)/(\d+)\)", history)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None, None
 
 
 # =============================
@@ -26,15 +37,12 @@ def classify_4plus(wins, total):
 
     pct = wins / total
 
-    # Nuke tier
+    # Nuke
     if pct >= 0.93 and total >= 40:
         return "nuke"
 
-    # Caution patterns based on your historical data
-    if total <= 25 and wins in [18, 19, 20, 21, 22]:
-        return "caution"
-
-    if 0.83 <= pct <= 0.89 and total >= 25:
+    # Caution = volatile mid tier small samples
+    if total < 30 and 0.85 <= pct < 0.91:
         return "caution"
 
     return "normal"
@@ -47,7 +55,7 @@ def get_totals_units(wins, total):
     if total == 0:
         return 1
 
-    pct = wins / total
+    pct = round(wins / total, 4)
 
     if total >= 30:
         if pct >= 0.95:
@@ -74,7 +82,7 @@ def get_totals_units(wins, total):
 
 
 def format_units(u):
-    if u == int(u):
+    if float(u).is_integer():
         return f"{int(u)}U"
     return f"{u}U"
 
@@ -84,7 +92,6 @@ def format_units(u):
 # =============================
 def normalize_league(name):
     name = name.lower()
-
     if "elite" in name:
         return "ELITE"
     if "setka" in name:
@@ -93,7 +100,6 @@ def normalize_league(name):
         return "CZECH"
     if "cup" in name:
         return "CUP"
-
     return name.upper()
 
 
@@ -106,7 +112,7 @@ async def on_ready():
 
 
 # =============================
-# MAIN MESSAGE HANDLER
+# MESSAGE HANDLER
 # =============================
 @client.event
 async def on_message(message):
@@ -154,16 +160,11 @@ async def on_message(message):
         play = row.get("Play", "").strip().upper()
         history = row.get("History", "").strip()
 
-        if "(" not in history:
+        wins_raw, total = extract_record(history)
+        if wins_raw is None:
             continue
 
-        try:
-            raw_wins = int(history.split("(")[1].split("/")[0])
-            total = int(history.split("/")[1].split(")")[0])
-        except:
-            continue
-
-        # Clean times but KEEP AM/PM
+        # Clean time (remove date but keep AM/PM)
         if " " in pst_time:
             pst_time = pst_time.split(" ", 1)[1]
         if " " in est_time:
@@ -172,18 +173,18 @@ async def on_message(message):
         key = f"{league}-{p1}-{p2}-{est_time}"
 
         # =============================
-        # 4+ SET HANDLING
+        # 4+ HANDLING
         # =============================
         if "4+" in play:
 
-            # Convert sweep rate to 4+ rate
-            wins = total - raw_wins
+            # Convert sweep rate → 4+ wins
+            wins = total - wins_raw
 
             if key not in four_plus:
-                classification = classify_4plus(wins, total)
+                tier = classify_4plus(wins, total)
                 four_plus[key] = (
                     league, p1, p2, est_time, pst_time,
-                    wins, total, classification
+                    wins, total, tier
                 )
 
             continue
@@ -193,17 +194,16 @@ async def on_message(message):
         # =============================
         if play in ["OVER", "UNDER"]:
 
-            # Skip if 4+ exists for same match
+            # Only skip if TRUE same matchup has 4+
             if key in four_plus:
                 continue
 
-            wins = raw_wins
-            units = get_totals_units(wins, total)
+            units = get_totals_units(wins_raw, total)
 
             totals[key] = (
                 league, p1, p2, play,
                 units, est_time, pst_time,
-                wins, total
+                wins_raw, total
             )
 
     # =============================
@@ -213,7 +213,6 @@ async def on_message(message):
 
     if four_plus:
         output += "4+ PLAYS 🔥\n\n"
-
         for v in four_plus.values():
             league, p1, p2, est, pst, wins, total, tier = v
 
@@ -231,7 +230,6 @@ async def on_message(message):
 
     if totals:
         output += "TOTALS 🔥\n\n"
-
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
 
