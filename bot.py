@@ -1,12 +1,10 @@
 import discord
 import os
 import re
-
-# =========================
-# CONFIG
-# =========================
+from discord.ext import commands
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
 ALLOWED_ROLE = "RW Official"
 
 ALLOWED_CHANNELS = [
@@ -14,201 +12,224 @@ ALLOWED_CHANNELS = [
     1471792196582637728   # Test
 ]
 
-# =========================
-# DISCORD SETUP
-# =========================
-
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
 intents.members = True
 
-client = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-current_slate_messages = []
+last_slate_messages = []
 
-# =========================
-# HELPER FUNCTIONS
-# =========================
 
-def normalize_league(raw):
-    raw = raw.upper()
-    if "ELITE" in raw:
+# ==============================
+# LEAGUE NORMALIZER
+# ==============================
+
+def normalize_league(name):
+    name = name.upper()
+    if "ELITE" in name:
         return "ELITE"
-    if "SETKA" in raw:
-        return "SETKA"
-    if "CUP" in raw:
+    if "CUP" in name:
         return "CUP"
-    if "CZECH" in raw:
+    if "SETKA" in name:
+        return "SETKA"
+    if "CZECH" in name:
         return "CZECH"
-    return raw
+    return name
 
-def strip_date(time_str):
-    # Removes 02/20 from 02/20 7:45 AM
-    parts = time_str.split(" ")
-    if len(parts) >= 2:
-        return " ".join(parts[1:])
-    return time_str
 
-def calculate_units(percentage, sample_size):
-    # Sample scaling logic
+# ==============================
+# TOTALS SCALING ENGINE v6.3
+# ==============================
 
-    if sample_size >= 30:
-        if percentage >= 0.95:
-            return 3
-        elif percentage >= 0.93:
-            return 2.5
-        elif percentage >= 0.90:
-            return 2
-        elif percentage >= 0.85:
-            return 1.5
-        elif percentage >= 0.81:
-            return 1.25
-        else:
-            return 1
-    else:
-        # More conservative for <30
-        if percentage >= 0.95:
-            return 2
-        elif percentage >= 0.90:
+def calculate_units(wins, total):
+    winrate = wins / total
+    percentage = winrate * 100
+
+    # SMALL SAMPLE (<30)
+    if total < 30:
+        if percentage >= 95:
             return 1.75
-        elif percentage >= 0.85:
+        elif percentage >= 91:
+            return 1.75
+        elif percentage >= 86:
             return 1.5
-        elif percentage >= 0.80:
+        elif percentage >= 81:
             return 1.25
         else:
-            return 1
+            return 1.0
 
-# =========================
-# CSV PROCESSING
-# =========================
+    # LARGE SAMPLE (30+)
+    else:
+        if percentage >= 96:
+            units = 2.5
+        elif percentage >= 93:
+            units = 2.0
+        elif percentage >= 89:
+            units = 1.75
+        elif percentage >= 84:
+            units = 1.5
+        elif percentage >= 81:
+            units = 1.25
+        else:
+            units = 1.0
 
-def process_csv(raw_text):
-    four_plus = []
-    totals = []
-    seen_matchups = set()
+        # BOOST RULES
+        if total >= 40 and percentage >= 92:
+            units += 0.25
 
-    lines = raw_text.splitlines()
+        if total >= 50 and percentage >= 94:
+            units += 0.25
+
+        if units > 3:
+            units = 3
+
+        return units
+
+
+# ==============================
+# 4+ EMOJI ENGINE
+# ==============================
+
+def four_plus_emoji(wins, total):
+    percentage = (wins / total) * 100
+
+    if percentage >= 97 and total >= 40:
+        return " ☢️"
+    elif percentage >= 90:
+        return " ⚠️"
+    else:
+        return ""
+
+
+# ==============================
+# FORMATTER
+# ==============================
+
+def format_slate(lines):
+
+    four_plus_games = []
+    totals_games = []
 
     for line in lines:
+
         if not line.strip():
             continue
 
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) < 7:
+        line = line.replace("–", "-")
+        parts = line.split("@")
+
+        left = parts[0].strip()
+        right = parts[1].strip()
+
+        league, matchup = left.split("-", 1)
+        league = normalize_league(league.strip())
+        matchup = matchup.strip()
+
+        record_match = re.search(r"\((\d+)\/(\d+)", line)
+        if not record_match:
             continue
 
-        league_raw = parts[0]
-        time_pst_raw = parts[1]
-        time_est_raw = parts[2]
-        player1 = parts[3]
-        player2 = parts[4]
-        play_type = parts[5]
-        history = parts[6]
+        wins = int(record_match.group(1))
+        total = int(record_match.group(2))
 
-        league = normalize_league(league_raw)
-        time_est = strip_date(time_est_raw)
-        time_pst = strip_date(time_pst_raw)
+        # SUBTRACT LOGIC (4+ only)
+        adjusted_wins = total - wins
 
-        match = re.search(r"\((\d+)/(\d+)\)", history)
-        if not match:
-            continue
+        time_part = right.split("(")[0].strip()
 
-        left = int(match.group(1))
-        right = int(match.group(2))
+        # TOTALS
+        if "UNDER" in line.upper() or "OVER" in line.upper():
+            units = calculate_units(wins, total)
+            play_type = "UNDER" if "UNDER" in line.upper() else "OVER"
 
-        matchup_key = f"{league}-{player1}-{player2}-{time_est}"
+            formatted = f"{league} – {matchup} {play_type} {units}U @ {time_part} ({wins}/{total})"
+            totals_games.append(formatted)
 
-        # ================= 4+ LOGIC =================
-        if "4+" in play_type.upper():
+        # 4+
+        else:
+            emoji = four_plus_emoji(adjusted_wins, total)
+            formatted = f"{league} – {matchup} @ {time_part} ({adjusted_wins}/{total}){emoji}"
+            four_plus_games.append(formatted)
 
-            new_left = right - left
-            percentage = new_left / right if right > 0 else 0
+    return four_plus_games, totals_games
 
-            emoji = ""
-            if right >= 30 and percentage >= 0.95:
-                emoji = " ☢️"
-            elif right >= 20 and percentage <= 0.80:
-                emoji = " ⚠️"
 
-            formatted = f"{league} – {player1} vs {player2}{emoji} @ {time_est} EST / {time_pst} PST ({new_left}/{right})"
+# ==============================
+# DELETE OLD SLATE
+# ==============================
 
-            if matchup_key not in seen_matchups:
-                four_plus.append(formatted)
-                seen_matchups.add(matchup_key)
+async def clear_old_slate():
+    global last_slate_messages
+    for msg in last_slate_messages:
+        try:
+            await msg.delete()
+        except:
+            pass
+    last_slate_messages = []
 
-        # ================= TOTALS LOGIC =================
-        elif "OVER" in play_type.upper() or "UNDER" in play_type.upper():
 
-            if matchup_key in seen_matchups:
-                continue  # prioritize 4+
-
-            percentage = left / right if right > 0 else 0
-            units = calculate_units(percentage, right)
-
-            formatted = f"{league} – {player1} vs {player2} {play_type.upper()} {units}U @ {time_est} EST / {time_pst} PST ({left}/{right})"
-
-            totals.append(formatted)
-
-    return four_plus, totals
-
-# =========================
+# ==============================
 # EVENTS
-# =========================
+# ==============================
 
-@client.event
+@bot.event
 async def on_ready():
-    print(f"Logged in as {client.user}")
+    print(f"Logged in as {bot.user}")
 
-@client.event
+
+@bot.event
 async def on_message(message):
-    global current_slate_messages
 
-    if message.author == client.user:
+    global last_slate_messages
+
+    if message.author.bot:
         return
 
-    if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
-        return
-
-    if message.channel.id not in ALLOWED_CHANNELS:
-        return
-
+    # PING TEST
     if message.content.strip().lower() == "ping":
         await message.channel.send("pong")
         return
 
-    # CSV Upload
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.endswith(".csv"):
+    # Channel restriction
+    if message.channel.id not in ALLOWED_CHANNELS:
+        return
 
-                file_bytes = await attachment.read()
-                raw_text = file_bytes.decode("utf-8")
+    # Role restriction
+    if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
+        return
 
-                try:
-                    await message.delete()
-                except:
-                    pass
+    content_lines = message.content.split("\n")
 
-                for old in current_slate_messages:
-                    try:
-                        await old.delete()
-                    except:
-                        pass
+    four_plus, totals = format_slate(content_lines)
 
-                current_slate_messages = []
+    if not four_plus and not totals:
+        return
 
-                four_plus, totals = process_csv(raw_text)
+    await clear_old_slate()
 
-                if four_plus:
-                    h1 = await message.channel.send("## 🔥 4+ PLAYS 🔥")
-                    b1 = await message.channel.send("\n\n".join(four_plus))
-                    current_slate_messages.extend([h1, b1])
+    await message.delete()
 
-                if totals:
-                    h2 = await message.channel.send("## 🔥 TOTALS 🔥")
-                    b2 = await message.channel.send("\n\n".join(totals))
-                    current_slate_messages.extend([h2, b2])
+    new_messages = []
 
-                return
+    if four_plus:
+        header = await message.channel.send("## **4+ PLAYS 🔥**")
+        new_messages.append(header)
 
-client.run(DISCORD_TOKEN)
+        slate_text = "\n\n".join(four_plus)
+        body = await message.channel.send(slate_text)
+        new_messages.append(body)
+
+    if totals:
+        header = await message.channel.send("## **TOTALS 🔥**")
+        new_messages.append(header)
+
+        slate_text = "\n\n".join(totals)
+        body = await message.channel.send(slate_text)
+        new_messages.append(body)
+
+    last_slate_messages = new_messages
+
+
+bot.run(DISCORD_TOKEN)
