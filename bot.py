@@ -1,6 +1,8 @@
 import discord
 import os
 import re
+import csv
+import io
 from discord.ext import commands
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -27,6 +29,7 @@ last_slate_messages = []
 
 def normalize_league(name):
     name = name.upper()
+
     if "ELITE" in name:
         return "ELITE"
     if "SETKA" in name:
@@ -35,17 +38,18 @@ def normalize_league(name):
         return "CUP"
     if "CZECH" in name:
         return "CZECH"
+
     return name
 
 
 # ==============================
-# TOTALS SCALING ENGINE
+# TOTALS SCALING (Historical Model)
 # ==============================
 
 def calculate_units(wins, total):
     percentage = (wins / total) * 100
 
-    # SMALL SAMPLE (<30)
+    # SMALL SAMPLE
     if total < 30:
         if percentage >= 95:
             return 1.75
@@ -58,9 +62,7 @@ def calculate_units(wins, total):
         else:
             return 1.0
 
-    # LARGE SAMPLE (30+)
-    units = 1.0
-
+    # LARGE SAMPLE
     if percentage >= 96:
         units = 2.5
     elif percentage >= 93:
@@ -74,7 +76,7 @@ def calculate_units(wins, total):
     else:
         units = 1.0
 
-    # Boost rules
+    # Boost
     if total >= 40 and percentage >= 92:
         units += 0.25
 
@@ -88,71 +90,17 @@ def calculate_units(wins, total):
 
 
 # ==============================
-# 4+ EMOJI ENGINE
+# 4+ EMOJI LOGIC
 # ==============================
 
-def four_plus_emoji(wins, total):
-    percentage = (wins / total) * 100
+def four_plus_emoji(adjusted_wins, total):
+    percentage = (adjusted_wins / total) * 100
 
     if percentage >= 97 and total >= 40:
         return " ☢️"
     elif percentage >= 90:
         return " ⚠️"
     return ""
-
-
-# ==============================
-# FORMATTER
-# ==============================
-
-def format_slate(lines):
-    four_plus_games = []
-    totals_games = []
-
-    for line in lines:
-        if not line.strip():
-            continue
-
-        line = line.replace("–", "-")
-
-        record_match = re.search(r"\((\d+)\/(\d+)", line)
-        if not record_match:
-            continue
-
-        wins = int(record_match.group(1))
-        total = int(record_match.group(2))
-
-        parts = line.split("@")
-        if len(parts) < 2:
-            continue
-
-        left = parts[0].strip()
-        time_part = parts[1].split("(")[0].strip()
-
-        if "-" not in left:
-            continue
-
-        league, matchup = left.split("-", 1)
-        league = normalize_league(league.strip())
-        matchup = matchup.strip()
-
-        # TOTALS
-        if "UNDER" in line.upper() or "OVER" in line.upper():
-            units = calculate_units(wins, total)
-            play_type = "UNDER" if "UNDER" in line.upper() else "OVER"
-
-            formatted = f"{league} – {matchup} {play_type} {units}U @ {time_part} ({wins}/{total})"
-            totals_games.append(formatted)
-
-        # 4+
-        else:
-            adjusted_wins = total - wins
-            emoji = four_plus_emoji(adjusted_wins, total)
-
-            formatted = f"{league} – {matchup} @ {time_part} ({adjusted_wins}/{total}){emoji}"
-            four_plus_games.append(formatted)
-
-    return four_plus_games, totals_games
 
 
 # ==============================
@@ -170,7 +118,7 @@ async def clear_old_slate():
 
 
 # ==============================
-# EVENTS
+# EVENT
 # ==============================
 
 @bot.event
@@ -196,24 +144,77 @@ async def on_message(message):
     if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
         return
 
-    content_lines = []
+    if not message.attachments:
+        return
 
-    # CSV Attachment Support
-    if message.attachments:
-        for attachment in message.attachments:
-            if attachment.filename.endswith(".csv"):
-                file_bytes = await attachment.read()
-                decoded = file_bytes.decode("utf-8")
-                content_lines = decoded.split("\n")
-                break
+    csv_file = None
 
-    # Normal text fallback
-    if not content_lines:
-        content_lines = message.content.split("\n")
+    for attachment in message.attachments:
+        if attachment.filename.endswith(".csv"):
+            csv_file = attachment
+            break
 
-    four_plus, totals = format_slate(content_lines)
+    if not csv_file:
+        return
 
-    if not four_plus and not totals:
+    file_bytes = await csv_file.read()
+    decoded = file_bytes.decode("utf-8")
+
+    reader = csv.DictReader(io.StringIO(decoded))
+
+    four_plus_games = []
+    totals_games = []
+
+    for row in reader:
+        league = normalize_league(row["League"])
+        player1 = row["Player 1"]
+        player2 = row["Player 2"]
+        play = row["Play"].upper()
+        history = row["History"]
+
+        # Extract record
+        record_match = re.search(r"\((\d+)\/(\d+)\)", history)
+        if not record_match:
+            continue
+
+        wins = int(record_match.group(1))
+        total = int(record_match.group(2))
+
+        est_time = row["Time (Eastern)"]
+        pst_time = row["Time (Pacific)"]
+
+        # Remove date portion
+        est_time = est_time.split(" ")[-2] + " " + est_time.split(" ")[-1]
+        pst_time = pst_time.split(" ")[-2] + " " + pst_time.split(" ")[-1]
+
+        formatted_time = f"{est_time} EST / {pst_time} PST"
+
+        # 4+
+        if "4+" in play:
+            adjusted_wins = total - wins
+            emoji = four_plus_emoji(adjusted_wins, total)
+
+            formatted = (
+                f"{league} – {player1} vs {player2} @ "
+                f"{formatted_time} ({adjusted_wins}/{total}){emoji}"
+            )
+
+            four_plus_games.append(formatted)
+
+        # TOTALS
+        elif "UNDER" in play or "OVER" in play:
+            units = calculate_units(wins, total)
+            play_type = "UNDER" if "UNDER" in play else "OVER"
+
+            formatted = (
+                f"{league} – {player1} vs {player2} "
+                f"{play_type} {units}U @ {formatted_time} "
+                f"({wins}/{total})"
+            )
+
+            totals_games.append(formatted)
+
+    if not four_plus_games and not totals_games:
         return
 
     await clear_old_slate()
@@ -221,18 +222,18 @@ async def on_message(message):
 
     new_messages = []
 
-    if four_plus:
+    if four_plus_games:
         header = await message.channel.send("## **4+ PLAYS 🔥**")
         new_messages.append(header)
 
-        body = await message.channel.send("\n\n".join(four_plus))
+        body = await message.channel.send("\n\n".join(four_plus_games))
         new_messages.append(body)
 
-    if totals:
+    if totals_games:
         header = await message.channel.send("## **TOTALS 🔥**")
         new_messages.append(header)
 
-        body = await message.channel.send("\n\n".join(totals))
+        body = await message.channel.send("\n\n".join(totals_games))
         new_messages.append(body)
 
     last_slate_messages = new_messages
