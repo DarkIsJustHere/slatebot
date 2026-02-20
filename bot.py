@@ -200,7 +200,21 @@ async def on_message(message):
     if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
         return
 
+    content_lines = []
+
+# If message has CSV attachment
+if message.attachments:
+    for attachment in message.attachments:
+        if attachment.filename.endswith(".csv"):
+            file_bytes = await attachment.read()
+            decoded = file_bytes.decode("utf-8")
+            content_lines = decoded.split("\n")
+            break
+
+# If normal text message
+if not content_lines:
     content_lines = message.content.split("\n")
+
 
     four_plus, totals = format_slate(content_lines)
 
@@ -233,3 +247,4 @@ async def on_message(message):
 
 
 bot.run(DISCORD_TOKEN)
+
