@@ -179,11 +179,22 @@ async def on_ready():
 @client.event
 async def on_message(message):
 
-    global current_slate
-
     if message.author == client.user:
         return
 
+    # 🔒 ROLE RESTRICTION
+    ALLOWED_ROLE = "RW Official"
+
+    if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
+        return
+
+    # 🔒 CHANNEL RESTRICTION
+    ALLOWED_CHANNEL_ID = 1474078126630768822
+
+    if message.channel.id != ALLOWED_CHANNEL_ID:
+        return
+
+    # 🔥 SLATE COMMAND
     if message.content.startswith("!slate"):
 
         raw_text = message.content.replace("!slate", "").strip()
@@ -195,6 +206,7 @@ async def on_message(message):
             pass
 
         # Delete previous slate
+        global current_slate
         for old in current_slate:
             try:
                 await old.delete()
@@ -219,6 +231,6 @@ async def on_message(message):
             msg = await message.channel.send("No valid plays found.")
             current_slate.append(msg)
 
- 
 client.run(DISCORD_TOKEN)
+
 
