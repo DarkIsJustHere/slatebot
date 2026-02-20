@@ -1,175 +1,68 @@
-# ============================================================
-# 🔥 SLATEBOT v6.2 — OWNER CALIBRATED ENGINE
-# ============================================================
-
 import discord
-import re
 import os
-
-DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+import re
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.guilds = True
+intents.members = True
+
 client = discord.Client(intents=intents)
 
+DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
+
+# Store last slate messages so we can delete them
 current_slate = []
 
 
-# ============================================================
-# 📊 TOTALS UNIT SIZING (UNCHANGED)
-# ============================================================
-
-def calculate_units(percent):
-    if percent < 80:
-        return None
-    elif percent < 85:
-        return "1U"
-    elif percent < 90:
-        return "1.25U"
-    elif percent < 93:
-        return "1.5U"
-    elif percent < 95:
-        return "2U"
-    else:
-        return "2.5U"
-
-
-# ============================================================
-# 🧠 4+ CLASSIFICATION ENGINE v6.2
-# ============================================================
-
-def classify_4plus(percent, sample):
-
-    # ☢️ NUKE LOGIC (Owner calibrated)
-    if (
-        (percent >= 92 and sample >= 50) or
-        (percent >= 95 and sample >= 40) or
-        (percent >= 90 and sample >= 65)
-    ):
-        return "☢️"
-
-    # ⚠️ CAUTION LOGIC
-    if (
-        sample <= 22 or
-        percent < 88 or
-        (88 <= percent <= 91 and sample < 40)
-    ):
-        return "⚠️"
-
-    return ""
-
-
-# ============================================================
-# 🏷 LEAGUE CLEANER
-# ============================================================
-
-def clean_league(name):
-    name = name.upper()
-
-    if "CZECH" in name:
-        return "CZECH"
-    if "SETKA" in name:
-        return "SETKA"
-    if "ELITE" in name:
-        return "ELITE"
-    if "CUP" in name:
-        return "CUP"
-
-    return name
-
-
-# ============================================================
-# 🧠 CSV PROCESSOR
-# ============================================================
-
-def process_csv(text):
-
-    lines = text.split("\n")
+def process_csv(raw_text):
     four_plus = []
     totals = []
 
-    seen_matchups_4plus = set()
-    seen_totals = set()
+    lines = raw_text.splitlines()
 
     for line in lines:
-
-        if "League" in line or not line.strip():
+        if not line.strip():
             continue
 
-        parts = line.split(",")
+        # Try CSV-style first
+        parts = [p.strip() for p in line.split(",")]
 
-        if len(parts) < 7:
-            continue
+        if len(parts) >= 7:
+            league = parts[0].replace("TT ", "").replace("Liga Pro", "").strip().upper()
+            time_pst = parts[1]
+            time_est = parts[2]
+            player1 = parts[3]
+            player2 = parts[4]
+            play_type = parts[5]
+            history = parts[6]
 
-        league = clean_league(parts[0])
-
-        time_pst = parts[1].split(" ")[1] + " " + parts[1].split(" ")[2]
-        time_est = parts[2].split(" ")[1] + " " + parts[2].split(" ")[2]
-
-        player1 = parts[3].strip()
-        player2 = parts[4].strip()
-        play_type = parts[5].strip()
-        history = parts[6]
-
-        history_match = re.search(r"\((\d+)/(\d+)\)", history)
-        if not history_match:
-            continue
-
-        raw_left = int(history_match.group(1))
-        sample = int(history_match.group(2))
-
-        matchup_key = tuple(sorted([player1, player2]))
-
-        # 4+ Logic
-        if "4+ SET" in play_type:
-
-            left = sample - raw_left
-            percent = round((left / sample) * 100)
-
-            emoji = classify_4plus(percent, sample)
-            emoji_text = f" {emoji}" if emoji else ""
-
-            formatted = (
-                f"{league} – {player1} vs {player2}{emoji_text} "
-                f"@ {time_est} EST / {time_pst} PST ({left}/{sample})"
-            )
-
-            four_plus.append(formatted)
-            seen_matchups_4plus.add(matchup_key)
-
-        # Totals Logic
-        elif "UNDER" in play_type or "OVER" in play_type:
-
-            if matchup_key in seen_matchups_4plus:
+            match = re.search(r"\((\d+)/(\d+)\)", history)
+            if not match:
                 continue
 
-            left = raw_left
-            percent = round((left / sample) * 100)
+            left = int(match.group(1))
+            right = int(match.group(2))
 
-            units = calculate_units(percent)
-            if not units:
-                continue
+            new_left = right - left
 
-            totals_key = (matchup_key, play_type)
-            if totals_key in seen_totals:
-                continue
+            formatted = f"{league} – {player1} vs {player2} @ {time_est} / {time_pst} ({new_left}/{right})"
 
-            seen_totals.add(totals_key)
+            percentage = new_left / right
 
-            formatted = (
-                f"{league} – {player1} vs {player2} "
-                f"{play_type} {units} "
-                f"@ {time_est} EST / {time_pst} PST ({left}/{sample})"
-            )
+            emoji = ""
+            if percentage >= 0.95:
+                emoji = " ☢️"
+            elif percentage <= 0.85:
+                emoji = " ⚠️"
 
-            totals.append(formatted)
+            if "4+" in play_type.upper():
+                four_plus.append(formatted + emoji)
+            elif "OVER" in play_type.upper() or "UNDER" in play_type.upper():
+                totals.append(formatted + emoji)
 
     return four_plus, totals
 
-
-# ============================================================
-# 🚀 DISCORD EVENTS
-# ============================================================
 
 @client.event
 async def on_ready():
@@ -184,14 +77,13 @@ async def on_message(message):
 
     # 🔒 ROLE RESTRICTION
     ALLOWED_ROLE = "RW Official"
-
     if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
         return
 
-    # 🔒 CHANNEL RESTRICTION (Main + Test)
+    # 🔒 CHANNEL RESTRICTION
     ALLOWED_CHANNELS = [
-        1474078126630768822,
-        1471792196582637728
+        1474078126630768822,  # Main Server
+        1471792196582637728   # Test Server
     ]
 
     if message.channel.id not in ALLOWED_CHANNELS:
@@ -202,18 +94,52 @@ async def on_message(message):
         await message.channel.send("pong")
         return
 
-    # 🔥 SLATE COMMAND
+    # 📎 CSV ATTACHMENT HANDLER
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.filename.endswith(".csv"):
+
+                file_bytes = await attachment.read()
+                raw_text = file_bytes.decode("utf-8")
+
+                try:
+                    await message.delete()
+                except:
+                    pass
+
+                global current_slate
+                for old in current_slate:
+                    try:
+                        await old.delete()
+                    except:
+                        pass
+
+                current_slate = []
+
+                four_plus, totals = process_csv(raw_text)
+
+                if four_plus:
+                    h1 = await message.channel.send("# 🔥 4+ PLAYS 🔥")
+                    b1 = await message.channel.send("\n\n".join(four_plus))
+                    current_slate.extend([h1, b1])
+
+                if totals:
+                    h2 = await message.channel.send("# 🔥 TOTALS 🔥")
+                    b2 = await message.channel.send("\n\n".join(totals))
+                    current_slate.extend([h2, b2])
+
+                return
+
+    # 🔥 MANUAL COMMAND FALLBACK
     if message.content.startswith("!slate"):
 
         raw_text = message.content.replace("!slate", "").strip()
 
-        # Delete user message
         try:
             await message.delete()
         except:
             pass
 
-        # Delete previous slate
         global current_slate
         for old in current_slate:
             try:
@@ -239,8 +165,5 @@ async def on_message(message):
             msg = await message.channel.send("No valid plays found.")
             current_slate.append(msg)
 
+
 client.run(DISCORD_TOKEN)
-
-
-
-
