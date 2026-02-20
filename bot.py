@@ -8,13 +8,12 @@ DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 ALLOWED_ROLE = "RW Official"
 
 ALLOWED_CHANNELS = [
-    1474078126630768822,  # Main
-    1471792196582637728   # Test
+    1474078126630768822,
+    1471792196582637728
 ]
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.guilds = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
@@ -30,22 +29,21 @@ def normalize_league(name):
     name = name.upper()
     if "ELITE" in name:
         return "ELITE"
-    if "CUP" in name:
-        return "CUP"
     if "SETKA" in name:
         return "SETKA"
+    if "CUP" in name:
+        return "CUP"
     if "CZECH" in name:
         return "CZECH"
     return name
 
 
 # ==============================
-# TOTALS SCALING ENGINE v6.3
+# TOTALS SCALING ENGINE
 # ==============================
 
 def calculate_units(wins, total):
-    winrate = wins / total
-    percentage = winrate * 100
+    percentage = (wins / total) * 100
 
     # SMALL SAMPLE (<30)
     if total < 30:
@@ -61,31 +59,32 @@ def calculate_units(wins, total):
             return 1.0
 
     # LARGE SAMPLE (30+)
+    units = 1.0
+
+    if percentage >= 96:
+        units = 2.5
+    elif percentage >= 93:
+        units = 2.0
+    elif percentage >= 89:
+        units = 1.75
+    elif percentage >= 84:
+        units = 1.5
+    elif percentage >= 81:
+        units = 1.25
     else:
-        if percentage >= 96:
-            units = 2.5
-        elif percentage >= 93:
-            units = 2.0
-        elif percentage >= 89:
-            units = 1.75
-        elif percentage >= 84:
-            units = 1.5
-        elif percentage >= 81:
-            units = 1.25
-        else:
-            units = 1.0
+        units = 1.0
 
-        # BOOST RULES
-        if total >= 40 and percentage >= 92:
-            units += 0.25
+    # Boost rules
+    if total >= 40 and percentage >= 92:
+        units += 0.25
 
-        if total >= 50 and percentage >= 94:
-            units += 0.25
+    if total >= 50 and percentage >= 94:
+        units += 0.25
 
-        if units > 3:
-            units = 3
+    if units > 3:
+        units = 3
 
-        return units
+    return units
 
 
 # ==============================
@@ -99,8 +98,7 @@ def four_plus_emoji(wins, total):
         return " ☢️"
     elif percentage >= 90:
         return " ⚠️"
-    else:
-        return ""
+    return ""
 
 
 # ==============================
@@ -108,24 +106,14 @@ def four_plus_emoji(wins, total):
 # ==============================
 
 def format_slate(lines):
-
     four_plus_games = []
     totals_games = []
 
     for line in lines:
-
         if not line.strip():
             continue
 
         line = line.replace("–", "-")
-        parts = line.split("@")
-
-        left = parts[0].strip()
-        right = parts[1].strip()
-
-        league, matchup = left.split("-", 1)
-        league = normalize_league(league.strip())
-        matchup = matchup.strip()
 
         record_match = re.search(r"\((\d+)\/(\d+)", line)
         if not record_match:
@@ -134,10 +122,19 @@ def format_slate(lines):
         wins = int(record_match.group(1))
         total = int(record_match.group(2))
 
-        # SUBTRACT LOGIC (4+ only)
-        adjusted_wins = total - wins
+        parts = line.split("@")
+        if len(parts) < 2:
+            continue
 
-        time_part = right.split("(")[0].strip()
+        left = parts[0].strip()
+        time_part = parts[1].split("(")[0].strip()
+
+        if "-" not in left:
+            continue
+
+        league, matchup = left.split("-", 1)
+        league = normalize_league(league.strip())
+        matchup = matchup.strip()
 
         # TOTALS
         if "UNDER" in line.upper() or "OVER" in line.upper():
@@ -149,7 +146,9 @@ def format_slate(lines):
 
         # 4+
         else:
+            adjusted_wins = total - wins
             emoji = four_plus_emoji(adjusted_wins, total)
+
             formatted = f"{league} – {matchup} @ {time_part} ({adjusted_wins}/{total}){emoji}"
             four_plus_games.append(formatted)
 
@@ -157,7 +156,7 @@ def format_slate(lines):
 
 
 # ==============================
-# DELETE OLD SLATE
+# CLEAR OLD SLATE
 # ==============================
 
 async def clear_old_slate():
@@ -181,40 +180,36 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
-
     global last_slate_messages
 
     if message.author.bot:
         return
 
-    # PING TEST
+    # Ping test
     if message.content.strip().lower() == "ping":
         await message.channel.send("pong")
         return
 
-    # Channel restriction
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    # Role restriction
     if not any(role.name == ALLOWED_ROLE for role in message.author.roles):
         return
 
     content_lines = []
 
-# If message has CSV attachment
-if message.attachments:
-    for attachment in message.attachments:
-        if attachment.filename.endswith(".csv"):
-            file_bytes = await attachment.read()
-            decoded = file_bytes.decode("utf-8")
-            content_lines = decoded.split("\n")
-            break
+    # CSV Attachment Support
+    if message.attachments:
+        for attachment in message.attachments:
+            if attachment.filename.endswith(".csv"):
+                file_bytes = await attachment.read()
+                decoded = file_bytes.decode("utf-8")
+                content_lines = decoded.split("\n")
+                break
 
-# If normal text message
-if not content_lines:
-    content_lines = message.content.split("\n")
-
+    # Normal text fallback
+    if not content_lines:
+        content_lines = message.content.split("\n")
 
     four_plus, totals = format_slate(content_lines)
 
@@ -222,7 +217,6 @@ if not content_lines:
         return
 
     await clear_old_slate()
-
     await message.delete()
 
     new_messages = []
@@ -231,20 +225,17 @@ if not content_lines:
         header = await message.channel.send("## **4+ PLAYS 🔥**")
         new_messages.append(header)
 
-        slate_text = "\n\n".join(four_plus)
-        body = await message.channel.send(slate_text)
+        body = await message.channel.send("\n\n".join(four_plus))
         new_messages.append(body)
 
     if totals:
         header = await message.channel.send("## **TOTALS 🔥**")
         new_messages.append(header)
 
-        slate_text = "\n\n".join(totals)
-        body = await message.channel.send(slate_text)
+        body = await message.channel.send("\n\n".join(totals))
         new_messages.append(body)
 
     last_slate_messages = new_messages
 
 
 bot.run(DISCORD_TOKEN)
-
