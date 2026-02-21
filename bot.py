@@ -2,15 +2,30 @@ import discord
 import csv
 import io
 import re
+import os
 from datetime import datetime
 
-TOKEN = "YOUR_BOT_TOKEN"
+# ==============================
+# TOKEN (SAFE FOR HOSTING)
+# ==============================
 
-# ✅ Allow BOTH servers
+TOKEN = os.getenv("TOKEN")
+
+if not TOKEN:
+    raise ValueError("No TOKEN found. Set it in your environment variables.")
+
+# ==============================
+# ALLOWED CHANNELS
+# ==============================
+
 ALLOWED_CHANNELS = [
-    1471792196582637728,  # testing
-    1474078126630768822   # main
+    1471792196582637728,  # Testing server
+    1474078126630768822   # Main server
 ]
+
+# ==============================
+# DISCORD SETUP
+# ==============================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -18,9 +33,9 @@ client = discord.Client(intents=intents)
 
 last_slate_messages = []
 
-# -----------------------------
-# Utility Functions
-# -----------------------------
+# ==============================
+# UTIL FUNCTIONS
+# ==============================
 
 def format_units(u):
     if u == 1:
@@ -54,22 +69,21 @@ def convert_league(name):
 def parse_time(est_time):
     dt = datetime.strptime(est_time, "%m/%d %I:%M %p")
     est = dt.strftime("%I:%M %p")
-    pst = (dt.hour - 3) % 24
-    pst_dt = dt.replace(hour=pst)
+    pst_dt = dt.replace(hour=(dt.hour - 3) % 24)
     pst = pst_dt.strftime("%I:%M %p")
     return est, pst
 
-# -----------------------------
-# Bot Ready
-# -----------------------------
+# ==============================
+# BOT READY
+# ==============================
 
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
 
-# -----------------------------
-# Message Handler
-# -----------------------------
+# ==============================
+# MESSAGE HANDLER
+# ==============================
 
 @client.event
 async def on_message(message):
@@ -78,16 +92,14 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # 🔒 Restrict to allowed channels
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    # ✅ Ping test
+    # Ping test
     if message.content.lower() == "ping":
         await message.channel.send("pong")
         return
 
-    # ✅ Check for CSV
     if not message.attachments:
         return
 
@@ -108,15 +120,16 @@ async def on_message(message):
         p2 = row["Player 2"]
         play = row["Play"]
         history = row["History"]
-
         est_time = row["Time (Eastern)"]
+
         est, pst = parse_time(est_time)
 
-        # 4+ Parsing
+        # 4+ logic
         if "4+" in play:
             match = re.search(r"\((\d+)/(\d+)\)", history)
             if not match:
                 continue
+
             wins = int(match.group(2)) - int(match.group(1))
             total = int(match.group(2))
 
@@ -129,14 +142,14 @@ async def on_message(message):
             key = f"{league}{p1}{p2}{est}"
             four_plus[key] = (league, p1, p2, est, pst, wins, total, tier)
 
-        # Totals Parsing
+        # Totals logic
         elif "Over/Under" in history:
             match = re.search(r"\((\d+)/(\d+)\)", history)
             if not match:
                 continue
+
             wins = int(match.group(1))
             total = int(match.group(2))
-
             pct = wins / total
 
             if total >= 30:
@@ -165,20 +178,20 @@ async def on_message(message):
             key = f"{league}{p1}{p2}{est}{play}"
             totals[key] = (league, p1, p2, play, units, est, pst, wins, total)
 
-    # -----------------------------
+    # ==============================
     # SEND NEW SLATE FIRST
-    # -----------------------------
+    # ==============================
 
     old_messages = last_slate_messages.copy()
     last_slate_messages = []
 
     await message.delete()
 
-    # 4+ HEADER
+    # 4+ Header
     msg1 = await message.channel.send("🏓 **4+ PLAYS** 🏓")
     last_slate_messages.append(msg1)
 
-    # 4+ BODY
+    # 4+ Body
     if four_plus:
         text = ""
         for v in four_plus.values():
@@ -188,6 +201,7 @@ async def on_message(message):
                 emoji = " ☢️"
             elif tier == "caution":
                 emoji = " ⚠️"
+
             text += f"{league} – {p1} vs {p2} @ {est} EST / {pst} PST ({wins}/{total}){emoji}\n\n"
 
         msg2 = await message.channel.send(text.strip())
@@ -196,11 +210,11 @@ async def on_message(message):
 
     last_slate_messages.append(msg2)
 
-    # TOTALS HEADER
+    # Totals Header
     msg3 = await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
     last_slate_messages.append(msg3)
 
-    # TOTALS BODY
+    # Totals Body
     if totals:
         text = ""
         for v in totals.values():
@@ -213,13 +227,15 @@ async def on_message(message):
 
     last_slate_messages.append(msg4)
 
-    # -----------------------------
-    # DELETE OLD SLATE AFTER NEW SENT
-    # -----------------------------
+    # Delete old slate after new one is sent
     for msg in old_messages:
         try:
             await msg.delete()
         except:
             pass
+
+# ==============================
+# RUN BOT
+# ==============================
 
 client.run(TOKEN)
