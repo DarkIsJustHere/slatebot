@@ -240,9 +240,28 @@ async def on_message(message):
                 f"({wins}/{total})\n\n"
             )
 
-    if output:
-        await message.delete()
-        await message.channel.send(output.strip())
+    # =============================
+# FINAL 4-MESSAGE STRUCTURE
+# =============================
+
+await message.delete()
+
+# 4+ HEADER
+await message.channel.send("🏓 **4+ PLAYS** 🏓")
+
+if four_plus:
+    ...
+else:
+    await message.channel.send("No 4+ plays found.")
+
+# TOTALS HEADER
+await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
+
+if totals:
+    ...
+else:
+    await message.channel.send("No total plays found.")
 
 
 client.run(TOKEN)
+
