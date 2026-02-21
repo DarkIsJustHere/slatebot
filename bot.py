@@ -37,11 +37,11 @@ def classify_4plus(wins, total):
 
     pct = wins / total
 
-    # Nuke
+    # Nuke tier
     if pct >= 0.93 and total >= 40:
         return "nuke"
 
-    # Caution = volatile mid tier small samples
+    # Caution tier (volatile small samples)
     if total < 30 and 0.85 <= pct < 0.91:
         return "caution"
 
@@ -104,7 +104,7 @@ def normalize_league(name):
 
 
 # =============================
-# READY
+# READY EVENT
 # =============================
 @client.event
 async def on_ready():
@@ -164,7 +164,7 @@ async def on_message(message):
         if wins_raw is None:
             continue
 
-        # Clean time (remove date but keep AM/PM)
+        # Remove date but keep AM/PM
         if " " in pst_time:
             pst_time = pst_time.split(" ", 1)[1]
         if " " in est_time:
@@ -176,9 +176,7 @@ async def on_message(message):
         # 4+ HANDLING
         # =============================
         if "4+" in play:
-
-            # Convert sweep rate → 4+ wins
-            wins = total - wins_raw
+            wins = total - wins_raw  # convert sweep rate to 4+
 
             if key not in four_plus:
                 tier = classify_4plus(wins, total)
@@ -186,7 +184,6 @@ async def on_message(message):
                     league, p1, p2, est_time, pst_time,
                     wins, total, tier
                 )
-
             continue
 
         # =============================
@@ -194,9 +191,8 @@ async def on_message(message):
         # =============================
         if play in ["OVER", "UNDER"]:
 
-            # Only skip if TRUE same matchup has 4+
             if key in four_plus:
-                continue
+                continue  # 4+ overrides totals
 
             units = get_totals_units(wins_raw, total)
 
@@ -207,12 +203,17 @@ async def on_message(message):
             )
 
     # =============================
-    # BUILD OUTPUT
+    # FINAL 4 MESSAGE STRUCTURE
     # =============================
-    output = ""
 
+    await message.delete()
+
+    # -------- 4+ HEADER --------
+    await message.channel.send("🏓 **4+ PLAYS** 🏓")
+
+    # -------- 4+ BODY --------
     if four_plus:
-        output += "4+ PLAYS 🔥\n\n"
+        four_text = ""
         for v in four_plus.values():
             league, p1, p2, est, pst, wins, total, tier = v
 
@@ -222,46 +223,35 @@ async def on_message(message):
             elif tier == "caution":
                 emoji = " ⚠️"
 
-            output += (
+            four_text += (
                 f"{league} – {p1} vs {p2} @ "
                 f"{est} EST / {pst} PST "
                 f"({wins}/{total}){emoji}\n\n"
             )
 
+        await message.channel.send(four_text.strip())
+    else:
+        await message.channel.send("No 4+ plays found.")
+
+    # -------- TOTALS HEADER --------
+    await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
+
+    # -------- TOTALS BODY --------
     if totals:
-        output += "TOTALS 🔥\n\n"
+        totals_text = ""
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
 
-            output += (
+            totals_text += (
                 f"{league} – {p1} vs {p2} {play} "
                 f"{format_units(units)} @ "
                 f"{est} EST / {pst} PST "
                 f"({wins}/{total})\n\n"
             )
 
-    # =============================
-# FINAL 4-MESSAGE STRUCTURE
-# =============================
-
-await message.delete()
-
-# 4+ HEADER
-await message.channel.send("🏓 **4+ PLAYS** 🏓")
-
-if four_plus:
-    ...
-else:
-    await message.channel.send("No 4+ plays found.")
-
-# TOTALS HEADER
-await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
-
-if totals:
-    ...
-else:
-    await message.channel.send("No total plays found.")
+        await message.channel.send(totals_text.strip())
+    else:
+        await message.channel.send("No total plays found.")
 
 
 client.run(TOKEN)
-
