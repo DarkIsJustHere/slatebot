@@ -1,96 +1,45 @@
 import discord
-import os
 import csv
+import io
 import re
-from io import StringIO
+from datetime import datetime
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = "YOUR_BOT_TOKEN"
 
-RW_ROLE_NAME = "RW Official"
-ALLOWED_CHANNEL_IDS = [
-    1471792196582637728,  # test channel
+# ✅ Allow BOTH servers
+ALLOWED_CHANNELS = [
+    1471792196582637728,  # testing
+    1474078126630768822   # main
 ]
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True
-
 client = discord.Client(intents=intents)
 
+last_slate_messages = []
 
-# =============================
-# SAFE RECORD EXTRACTION
-# =============================
-def extract_record(history):
-    match = re.search(r"\((\d+)/(\d+)\)", history)
-    if match:
-        return int(match.group(1)), int(match.group(2))
-    return None, None
-
-
-# =============================
-# 4+ CLASSIFICATION
-# =============================
-def classify_4plus(wins, total):
-    if total == 0:
-        return "normal"
-
-    pct = wins / total
-
-    # Nuke tier
-    if pct >= 0.93 and total >= 40:
-        return "nuke"
-
-    # Caution tier (volatile small samples)
-    if total < 30 and 0.85 <= pct < 0.91:
-        return "caution"
-
-    return "normal"
-
-
-# =============================
-# TOTALS UNIT SIZING
-# =============================
-def get_totals_units(wins, total):
-    if total == 0:
-        return 1
-
-    pct = round(wins / total, 4)
-
-    if total >= 30:
-        if pct >= 0.95:
-            return 2.5
-        elif pct >= 0.91:
-            return 2
-        elif pct >= 0.86:
-            return 1.5
-        elif pct >= 0.81:
-            return 1.25
-        else:
-            return 1
-    else:
-        if pct >= 0.95:
-            return 2
-        elif pct >= 0.91:
-            return 1.75
-        elif pct >= 0.86:
-            return 1.5
-        elif pct >= 0.81:
-            return 1.25
-        else:
-            return 1
-
+# -----------------------------
+# Utility Functions
+# -----------------------------
 
 def format_units(u):
-    if float(u).is_integer():
-        return f"{int(u)}U"
+    if u == 1:
+        return "1U"
+    if u == 1.25:
+        return "1.25U"
+    if u == 1.5:
+        return "1.5U"
+    if u == 1.75:
+        return "1.75U"
+    if u == 2:
+        return "2U"
+    if u == 2.5:
+        return "2.5U"
+    if u == 3:
+        return "3U"
     return f"{u}U"
 
-
-# =============================
-# LEAGUE CLEANUP
-# =============================
-def normalize_league(name):
+def convert_league(name):
     name = name.lower()
     if "elite" in name:
         return "ELITE"
@@ -102,156 +51,175 @@ def normalize_league(name):
         return "CUP"
     return name.upper()
 
+def parse_time(est_time):
+    dt = datetime.strptime(est_time, "%m/%d %I:%M %p")
+    est = dt.strftime("%I:%M %p")
+    pst = (dt.hour - 3) % 24
+    pst_dt = dt.replace(hour=pst)
+    pst = pst_dt.strftime("%I:%M %p")
+    return est, pst
 
-# =============================
-# READY EVENT
-# =============================
+# -----------------------------
+# Bot Ready
+# -----------------------------
+
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
 
+# -----------------------------
+# Message Handler
+# -----------------------------
 
-# =============================
-# MESSAGE HANDLER
-# =============================
 @client.event
 async def on_message(message):
+    global last_slate_messages
 
-    if message.author == client.user:
+    if message.author.bot:
         return
 
-    if message.channel.id not in ALLOWED_CHANNEL_IDS:
+    # 🔒 Restrict to allowed channels
+    if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    if not any(role.name == RW_ROLE_NAME for role in message.author.roles):
-        return
-
-    if message.content.lower().strip() == "ping":
+    # ✅ Ping test
+    if message.content.lower() == "ping":
         await message.channel.send("pong")
         return
 
+    # ✅ Check for CSV
     if not message.attachments:
         return
 
-    csv_file = None
-    for attachment in message.attachments:
-        if attachment.filename.lower().endswith(".csv"):
-            csv_file = attachment
-            break
-
-    if not csv_file:
+    attachment = message.attachments[0]
+    if not attachment.filename.endswith(".csv"):
         return
 
-    file_bytes = await csv_file.read()
-    file_text = file_bytes.decode("utf-8", errors="ignore").lstrip("\ufeff")
-
-    reader = csv.DictReader(StringIO(file_text))
+    file_bytes = await attachment.read()
+    decoded = file_bytes.decode("utf-8")
+    reader = csv.DictReader(io.StringIO(decoded))
 
     four_plus = {}
     totals = {}
 
     for row in reader:
+        league = convert_league(row["League"])
+        p1 = row["Player 1"]
+        p2 = row["Player 2"]
+        play = row["Play"]
+        history = row["History"]
 
-        league = normalize_league(row.get("League", "").strip())
-        pst_time = row.get("Time (Pacific)", "").strip()
-        est_time = row.get("Time (Eastern)", "").strip()
-        p1 = row.get("Player 1", "").strip()
-        p2 = row.get("Player 2", "").strip()
-        play = row.get("Play", "").strip().upper()
-        history = row.get("History", "").strip()
+        est_time = row["Time (Eastern)"]
+        est, pst = parse_time(est_time)
 
-        wins_raw, total = extract_record(history)
-        if wins_raw is None:
-            continue
-
-        # Remove date but keep AM/PM
-        if " " in pst_time:
-            pst_time = pst_time.split(" ", 1)[1]
-        if " " in est_time:
-            est_time = est_time.split(" ", 1)[1]
-
-        key = f"{league}-{p1}-{p2}-{est_time}"
-
-        # =============================
-        # 4+ HANDLING
-        # =============================
+        # 4+ Parsing
         if "4+" in play:
-            wins = total - wins_raw  # convert sweep rate to 4+
+            match = re.search(r"\((\d+)/(\d+)\)", history)
+            if not match:
+                continue
+            wins = int(match.group(2)) - int(match.group(1))
+            total = int(match.group(2))
 
-            if key not in four_plus:
-                tier = classify_4plus(wins, total)
-                four_plus[key] = (
-                    league, p1, p2, est_time, pst_time,
-                    wins, total, tier
-                )
-            continue
+            tier = "normal"
+            if wins >= 40:
+                tier = "nuke"
+            elif wins <= 22:
+                tier = "caution"
 
-        # =============================
-        # TOTALS HANDLING
-        # =============================
-        if play in ["OVER", "UNDER"]:
+            key = f"{league}{p1}{p2}{est}"
+            four_plus[key] = (league, p1, p2, est, pst, wins, total, tier)
 
-            if key in four_plus:
-                continue  # 4+ overrides totals
+        # Totals Parsing
+        elif "Over/Under" in history:
+            match = re.search(r"\((\d+)/(\d+)\)", history)
+            if not match:
+                continue
+            wins = int(match.group(1))
+            total = int(match.group(2))
 
-            units = get_totals_units(wins_raw, total)
+            pct = wins / total
 
-            totals[key] = (
-                league, p1, p2, play,
-                units, est_time, pst_time,
-                wins_raw, total
-            )
+            if total >= 30:
+                if pct >= .95:
+                    units = 2.5
+                elif pct >= .91:
+                    units = 2
+                elif pct >= .86:
+                    units = 1.5
+                elif pct >= .81:
+                    units = 1.25
+                else:
+                    units = 1
+            else:
+                if pct >= .95:
+                    units = 2
+                elif pct >= .91:
+                    units = 1.75
+                elif pct >= .86:
+                    units = 1.5
+                elif pct >= .81:
+                    units = 1.25
+                else:
+                    units = 1
 
-    # =============================
-    # FINAL 4 MESSAGE STRUCTURE
-    # =============================
+            key = f"{league}{p1}{p2}{est}{play}"
+            totals[key] = (league, p1, p2, play, units, est, pst, wins, total)
+
+    # -----------------------------
+    # SEND NEW SLATE FIRST
+    # -----------------------------
+
+    old_messages = last_slate_messages.copy()
+    last_slate_messages = []
 
     await message.delete()
 
-    # -------- 4+ HEADER --------
-    await message.channel.send("🏓 **4+ PLAYS** 🏓")
+    # 4+ HEADER
+    msg1 = await message.channel.send("🏓 **4+ PLAYS** 🏓")
+    last_slate_messages.append(msg1)
 
-    # -------- 4+ BODY --------
+    # 4+ BODY
     if four_plus:
-        four_text = ""
+        text = ""
         for v in four_plus.values():
             league, p1, p2, est, pst, wins, total, tier = v
-
             emoji = ""
             if tier == "nuke":
                 emoji = " ☢️"
             elif tier == "caution":
                 emoji = " ⚠️"
+            text += f"{league} – {p1} vs {p2} @ {est} EST / {pst} PST ({wins}/{total}){emoji}\n\n"
 
-            four_text += (
-                f"{league} – {p1} vs {p2} @ "
-                f"{est} EST / {pst} PST "
-                f"({wins}/{total}){emoji}\n\n"
-            )
-
-        await message.channel.send(four_text.strip())
+        msg2 = await message.channel.send(text.strip())
     else:
-        await message.channel.send("No 4+ plays found.")
+        msg2 = await message.channel.send("No 4+ plays found.")
 
-    # -------- TOTALS HEADER --------
-    await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
+    last_slate_messages.append(msg2)
 
-    # -------- TOTALS BODY --------
+    # TOTALS HEADER
+    msg3 = await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
+    last_slate_messages.append(msg3)
+
+    # TOTALS BODY
     if totals:
-        totals_text = ""
+        text = ""
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
+            text += f"{league} – {p1} vs {p2} {play} {format_units(units)} @ {est} EST / {pst} PST ({wins}/{total})\n\n"
 
-            totals_text += (
-                f"{league} – {p1} vs {p2} {play} "
-                f"{format_units(units)} @ "
-                f"{est} EST / {pst} PST "
-                f"({wins}/{total})\n\n"
-            )
-
-        await message.channel.send(totals_text.strip())
+        msg4 = await message.channel.send(text.strip())
     else:
-        await message.channel.send("No total plays found.")
+        msg4 = await message.channel.send("No total plays found.")
 
+    last_slate_messages.append(msg4)
+
+    # -----------------------------
+    # DELETE OLD SLATE AFTER NEW SENT
+    # -----------------------------
+    for msg in old_messages:
+        try:
+            await msg.delete()
+        except:
+            pass
 
 client.run(TOKEN)
