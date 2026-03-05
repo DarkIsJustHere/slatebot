@@ -73,6 +73,24 @@ def parse_time(est_time):
     pst = pst_dt.strftime("%I:%M %p")
     return est, pst
 
+# ✅ NEW: Safe message splitting
+async def send_long_message(channel, text):
+    chunks = []
+    while len(text) > 2000:
+        split_index = text.rfind("\n", 0, 2000)
+        if split_index == -1:
+            split_index = 2000
+        chunks.append(text[:split_index])
+        text = text[split_index:]
+    chunks.append(text)
+
+    messages = []
+    for chunk in chunks:
+        msg = await channel.send(chunk.strip())
+        messages.append(msg)
+
+    return messages
+
 # ==============================
 # BOT READY
 # ==============================
@@ -95,7 +113,6 @@ async def on_message(message):
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    # Ping test
     if message.content.lower() == "ping":
         await message.channel.send("pong")
         return
@@ -204,11 +221,11 @@ async def on_message(message):
 
             text += f"{league} – {p1} vs {p2} @ {est} EST / {pst} PST ({wins}/{total}){emoji}\n\n"
 
-        msg2 = await message.channel.send(text.strip())
+        sent_msgs = await send_long_message(message.channel, text.strip())
+        last_slate_messages.extend(sent_msgs)
     else:
         msg2 = await message.channel.send("No 4+ plays found.")
-
-    last_slate_messages.append(msg2)
+        last_slate_messages.append(msg2)
 
     # Totals Header
     msg3 = await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
@@ -221,11 +238,11 @@ async def on_message(message):
             league, p1, p2, play, units, est, pst, wins, total = v
             text += f"{league} – {p1} vs {p2} {play} {format_units(units)} @ {est} EST / {pst} PST ({wins}/{total})\n\n"
 
-        msg4 = await message.channel.send(text.strip())
+        sent_msgs = await send_long_message(message.channel, text.strip())
+        last_slate_messages.extend(sent_msgs)
     else:
         msg4 = await message.channel.send("No total plays found.")
-
-    last_slate_messages.append(msg4)
+        last_slate_messages.append(msg4)
 
     # Delete old slate after new one is sent
     for msg in old_messages:
