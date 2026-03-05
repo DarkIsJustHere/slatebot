@@ -3,7 +3,8 @@ import csv
 import io
 import re
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import pytz
 
 # ==============================
 # TOKEN (SAFE FOR HOSTING)
@@ -19,9 +20,18 @@ if not TOKEN:
 # ==============================
 
 ALLOWED_CHANNELS = [
-    1471792196582637728,  # Testing server
-    1474078126630768822   # Main server
+    1471792196582637728,
+    1474078126630768822
 ]
+
+# ==============================
+# RECAP CHANNELS
+# ==============================
+
+FOUR_PLUS_CHANNEL = 1443356395935240302
+TOTALS_CHANNEL = 1446203029916356649
+
+EST = pytz.timezone("US/Eastern")
 
 # ==============================
 # DISCORD SETUP
@@ -73,23 +83,84 @@ def parse_time(est_time):
     pst = pst_dt.strftime("%I:%M %p")
     return est, pst
 
-# ✅ NEW: Safe message splitting
-async def send_long_message(channel, text):
-    chunks = []
-    while len(text) > 2000:
-        split_index = text.rfind("\n", 0, 2000)
-        if split_index == -1:
-            split_index = 2000
-        chunks.append(text[:split_index])
-        text = text[split_index:]
-    chunks.append(text)
+# ==============================
+# RECAP PARSER
+# ==============================
 
-    messages = []
-    for chunk in chunks:
-        msg = await channel.send(chunk.strip())
-        messages.append(msg)
+async def parse_four_plus(channel, start, end):
 
-    return messages
+    wins = 0
+    losses = 0
+    washes = 0
+
+    async for msg in channel.history(limit=None):
+
+        msg_time = msg.created_at.astimezone(EST)
+
+        if not (start <= msg_time < end):
+            continue
+
+        lines = msg.content.split("\n")
+
+        for line in lines:
+
+            if "vs" not in line:
+                continue
+
+            if "✅" in line:
+                wins += 1
+
+            elif "❌" in line:
+                losses += 1
+
+            elif "🧼" in line:
+                washes += 1
+
+    units = (wins * 1.1) - (losses * 3)
+
+    return wins, losses, washes, units
+
+
+async def parse_totals(channel, start, end):
+
+    wins = 0
+    losses = 0
+    hooks = 0
+    units = 0
+
+    async for msg in channel.history(limit=None):
+
+        msg_time = msg.created_at.astimezone(EST)
+
+        if not (start <= msg_time < end):
+            continue
+
+        lines = msg.content.split("\n")
+
+        for line in lines:
+
+            if "vs" not in line:
+                continue
+
+            unit_match = re.search(r'(\d+(\.\d+)?)U', line)
+
+            if not unit_match:
+                continue
+
+            stake = float(unit_match.group(1))
+
+            if "✅" in line:
+                wins += 1
+                units += stake
+
+            elif "❌" in line:
+                losses += 1
+                units -= stake
+
+            elif "🪝" in line:
+                hooks += 1
+
+    return wins, losses, hooks, units
 
 # ==============================
 # BOT READY
@@ -110,9 +181,73 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    # ==============================
+    # RECAP COMMANDS
+    # ==============================
+
+    if message.content.lower().startswith("!recap"):
+
+        now = datetime.now(EST)
+
+        if "daily" in message.content.lower():
+
+            start = (now - timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+
+            title = "DAILY"
+
+        elif "monthly" in message.content.lower():
+
+            start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            end = now
+
+            title = "MONTHLY"
+
+        else:
+            return
+
+        four_channel = client.get_channel(FOUR_PLUS_CHANNEL)
+        totals_channel = client.get_channel(TOTALS_CHANNEL)
+
+        fw, fl, fwash, funits = await parse_four_plus(four_channel, start, end)
+        tw, tl, thook, tunits = await parse_totals(totals_channel, start, end)
+
+        recap = f"📊 **{title} RECAP (EST)**\n\n"
+
+        # 4+ section
+        recap += "🏓 **4+ PLAYS**\n"
+
+        if fw + fl + fwash == 0:
+            recap += "No plays graded.\n\n"
+        else:
+            recap += f"Record: {fw}-{fl}"
+            if fwash > 0:
+                recap += f" ({fwash} Wash)"
+            recap += f"\nUnits: {funits:+.2f}U\n\n"
+
+        # totals section
+        recap += "🏓 **TOTAL PLAYS**\n"
+
+        if tw + tl + thook == 0:
+            recap += "No plays graded."
+        else:
+            recap += f"Record: {tw}-{tl}"
+            if thook > 0:
+                recap += f" ({thook} Hook)"
+            recap += f"\nUnits: {tunits:+.2f}U"
+
+        await message.channel.send(recap)
+
+        return
+
+    # ==============================
+    # ORIGINAL CHANNEL FILTER
+    # ==============================
+
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
+    # Ping test
     if message.content.lower() == "ping":
         await message.channel.send("pong")
         return
@@ -141,8 +276,8 @@ async def on_message(message):
 
         est, pst = parse_time(est_time)
 
-        # 4+ logic
         if "4+" in play:
+
             match = re.search(r"\((\d+)/(\d+)\)", history)
             if not match:
                 continue
@@ -151,6 +286,7 @@ async def on_message(message):
             total = int(match.group(2))
 
             tier = "normal"
+
             if wins >= 40:
                 tier = "nuke"
             elif wins <= 22:
@@ -159,8 +295,8 @@ async def on_message(message):
             key = f"{league}{p1}{p2}{est}"
             four_plus[key] = (league, p1, p2, est, pst, wins, total, tier)
 
-        # Totals logic
         elif "Over/Under" in history:
+
             match = re.search(r"\((\d+)/(\d+)\)", history)
             if not match:
                 continue
@@ -195,20 +331,14 @@ async def on_message(message):
             key = f"{league}{p1}{p2}{est}{play}"
             totals[key] = (league, p1, p2, play, units, est, pst, wins, total)
 
-    # ==============================
-    # SEND NEW SLATE FIRST
-    # ==============================
-
     old_messages = last_slate_messages.copy()
     last_slate_messages = []
 
     await message.delete()
 
-    # 4+ Header
     msg1 = await message.channel.send("🏓 **4+ PLAYS** 🏓")
     last_slate_messages.append(msg1)
 
-    # 4+ Body
     if four_plus:
         text = ""
         for v in four_plus.values():
@@ -221,30 +351,27 @@ async def on_message(message):
 
             text += f"{league} – {p1} vs {p2} @ {est} EST / {pst} PST ({wins}/{total}){emoji}\n\n"
 
-        sent_msgs = await send_long_message(message.channel, text.strip())
-        last_slate_messages.extend(sent_msgs)
+        msg2 = await message.channel.send(text.strip())
     else:
         msg2 = await message.channel.send("No 4+ plays found.")
-        last_slate_messages.append(msg2)
 
-    # Totals Header
+    last_slate_messages.append(msg2)
+
     msg3 = await message.channel.send("🏓 **TOTAL PLAYS** 🏓")
     last_slate_messages.append(msg3)
 
-    # Totals Body
     if totals:
         text = ""
         for v in totals.values():
             league, p1, p2, play, units, est, pst, wins, total = v
             text += f"{league} – {p1} vs {p2} {play} {format_units(units)} @ {est} EST / {pst} PST ({wins}/{total})\n\n"
 
-        sent_msgs = await send_long_message(message.channel, text.strip())
-        last_slate_messages.extend(sent_msgs)
+        msg4 = await message.channel.send(text.strip())
     else:
         msg4 = await message.channel.send("No total plays found.")
-        last_slate_messages.append(msg4)
 
-    # Delete old slate after new one is sent
+    last_slate_messages.append(msg4)
+
     for msg in old_messages:
         try:
             await msg.delete()
