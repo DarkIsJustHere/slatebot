@@ -3,11 +3,10 @@ import csv
 import io
 import re
 import os
-from datetime import datetime, timedelta
-import pytz
+from datetime import datetime, timedelta, timezone
 
 # ==============================
-# TOKEN (SAFE FOR HOSTING)
+# TOKEN
 # ==============================
 
 TOKEN = os.getenv("TOKEN")
@@ -21,7 +20,8 @@ if not TOKEN:
 
 ALLOWED_CHANNELS = [
     1471792196582637728,
-    1474078126630768822
+    1474078126630768822,
+    1479241150996152340
 ]
 
 # ==============================
@@ -31,7 +31,7 @@ ALLOWED_CHANNELS = [
 FOUR_PLUS_CHANNEL = 1443356395935240302
 TOTALS_CHANNEL = 1446203029916356649
 
-EST = pytz.timezone("US/Eastern")
+EST = timezone(timedelta(hours=-5))
 
 # ==============================
 # DISCORD SETUP
@@ -84,7 +84,7 @@ def parse_time(est_time):
     return est, pst
 
 # ==============================
-# RECAP PARSER
+# RECAP FUNCTIONS
 # ==============================
 
 async def parse_four_plus(channel, start, end):
@@ -92,6 +92,8 @@ async def parse_four_plus(channel, start, end):
     wins = 0
     losses = 0
     washes = 0
+
+    seen = set()
 
     async for msg in channel.history(limit=None):
 
@@ -104,8 +106,15 @@ async def parse_four_plus(channel, start, end):
 
         for line in lines:
 
+            line = line.strip()
+
             if "vs" not in line:
                 continue
+
+            if line in seen:
+                continue
+
+            seen.add(line)
 
             if "✅" in line:
                 wins += 1
@@ -128,6 +137,8 @@ async def parse_totals(channel, start, end):
     hooks = 0
     units = 0
 
+    seen = set()
+
     async for msg in channel.history(limit=None):
 
         msg_time = msg.created_at.astimezone(EST)
@@ -139,10 +150,17 @@ async def parse_totals(channel, start, end):
 
         for line in lines:
 
+            line = line.strip()
+
             if "vs" not in line:
                 continue
 
-            unit_match = re.search(r'(\d+(\.\d+)?)U', line)
+            if line in seen:
+                continue
+
+            seen.add(line)
+
+            unit_match = re.search(r'(\d+(\.\d+)?)U', line, re.IGNORECASE)
 
             if not unit_match:
                 continue
@@ -181,9 +199,9 @@ async def on_message(message):
     if message.author.bot:
         return
 
-    # ==============================
-    # RECAP COMMANDS
-    # ==============================
+# ==============================
+# RECAP COMMANDS
+# ==============================
 
     if message.content.lower().startswith("!recap"):
 
@@ -214,7 +232,6 @@ async def on_message(message):
 
         recap = f"📊 **{title} RECAP (EST)**\n\n"
 
-        # 4+ section
         recap += "🏓 **4+ PLAYS**\n"
 
         if fw + fl + fwash == 0:
@@ -225,7 +242,6 @@ async def on_message(message):
                 recap += f" ({fwash} Wash)"
             recap += f"\nUnits: {funits:+.2f}U\n\n"
 
-        # totals section
         recap += "🏓 **TOTAL PLAYS**\n"
 
         if tw + tl + thook == 0:
@@ -240,14 +256,13 @@ async def on_message(message):
 
         return
 
-    # ==============================
-    # ORIGINAL CHANNEL FILTER
-    # ==============================
+# ==============================
+# ORIGINAL BOT LOGIC
+# ==============================
 
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    # Ping test
     if message.content.lower() == "ping":
         await message.channel.send("pong")
         return
