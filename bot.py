@@ -75,7 +75,6 @@ async def parse_four_plus(channel,start,end,limit=None):
     wins=0
     losses=0
     washes=0
-
     seen=set()
 
     async for msg in channel.history(limit=limit):
@@ -121,7 +120,6 @@ async def parse_totals(channel,start,end,limit=None):
     losses=0
     hooks=0
     units=0
-
     seen=set()
 
     async for msg in channel.history(limit=limit):
@@ -183,29 +181,31 @@ async def on_message(message):
     if message.author.bot:
         return
 
+    content = message.content.lower().strip()
+
 # ==============================
 # RECAP COMMANDS
 # ==============================
 
-    if message.content.lower().startswith("!recap"):
+    if content.startswith("!recap"):
 
         now=datetime.now(EST)
 
-        if "test" in message.content.lower():
+        if "test" in content:
 
             start=None
             end=None
             limit=50
             title="TEST"
 
-        elif "daily" in message.content.lower():
+        elif "daily" in content:
 
             start=(now-timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
             end=start+timedelta(days=1)
             limit=None
             title="DAILY"
 
-        elif "monthly" in message.content.lower():
+        elif "monthly" in content:
 
             start=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
             end=now
@@ -257,7 +257,7 @@ async def on_message(message):
     if message.channel.id not in ALLOWED_CHANNELS:
         return
 
-    if message.content.lower()=="ping":
+    if content=="ping":
         await message.channel.send("pong")
         return
 
