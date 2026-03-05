@@ -11,7 +11,7 @@ if not TOKEN:
     raise ValueError("No TOKEN found.")
 
 # ==============================
-# CHANNELS
+# CHANNEL CONFIG
 # ==============================
 
 ALLOWED_CHANNELS = [
@@ -75,6 +75,7 @@ async def parse_four_plus(channel,start,end,limit=None):
     wins=0
     losses=0
     washes=0
+
     seen=set()
 
     async for msg in channel.history(limit=limit):
@@ -91,6 +92,10 @@ async def parse_four_plus(channel,start,end,limit=None):
             if "vs" not in line:
                 continue
 
+            # ignore totals lines
+            if "U @" in line or "U@" in line:
+                continue
+
             if line in seen:
                 continue
 
@@ -98,8 +103,10 @@ async def parse_four_plus(channel,start,end,limit=None):
 
             if "✅" in line:
                 wins+=1
+
             elif "❌" in line:
                 losses+=1
+
             elif "🧼" in line:
                 washes+=1
 
@@ -107,12 +114,14 @@ async def parse_four_plus(channel,start,end,limit=None):
 
     return wins,losses,washes,units
 
+
 async def parse_totals(channel,start,end,limit=None):
 
     wins=0
     losses=0
     hooks=0
     units=0
+
     seen=set()
 
     async for msg in channel.history(limit=limit):
@@ -144,9 +153,11 @@ async def parse_totals(channel,start,end,limit=None):
             if "✅" in line:
                 wins+=1
                 units+=stake
+
             elif "❌" in line:
                 losses+=1
                 units-=stake
+
             elif "🪝" in line:
                 hooks+=1
 
