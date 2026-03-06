@@ -182,16 +182,14 @@ async def on_message(message):
             start=None
             end=None
             limit=50
-            title=f"TEST RECAP — {now.strftime('%b %-d')} (EST)"
+            title=f"TEST RECAP — {now.strftime('%b')} {now.day} (EST)"
 
         elif "daily" in content:
 
             start=(now-timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
             end=start+timedelta(days=1)
 
-            date_label=start.strftime("%b %-d")
-
-            title=f"DAILY RECAP — {date_label} (EST)"
+            title=f"DAILY RECAP — {start.strftime('%b')} {start.day} (EST)"
             limit=None
 
         elif "monthly" in content:
@@ -215,6 +213,8 @@ async def on_message(message):
         fw,fl,fwash,nw,nl,cw,cl,kw,kl=await parse_four_plus(four_channel,start,end,limit)
         tw,tl,tunits=await parse_totals(totals_channel,start,end,limit)
 
+        four_units=(fw*1.1)-(fl*3)
+
         recap=f"📊 **{title}**\n\n"
 
         recap+="🏓 **4+ PLAYS**\n"
@@ -223,7 +223,7 @@ async def on_message(message):
         if fwash>0:
             recap+=f" ({fwash} Wash)"
 
-        recap+="\n\n"
+        recap+=f"\nUnits: {four_units:+.2f}U\n\n"
 
         recap+=f"Normal {nw}-{nl}\n"
         recap+=f"⚠️ {cw}-{cl}\n"
