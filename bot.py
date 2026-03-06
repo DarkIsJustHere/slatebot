@@ -28,9 +28,8 @@ client = discord.Client(intents=intents)
 
 last_slate_messages = []
 
-
 # ==============================
-# UTIL FUNCTIONS (CSV ENGINE)
+# UTIL FUNCTIONS
 # ==============================
 
 def format_units(u):
@@ -225,18 +224,10 @@ async def parse_totals(channel,start,end,limit=None):
     return wins,losses,units
 
 
-# ==============================
-# BOT READY
-# ==============================
-
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user}")
 
-
-# ==============================
-# MESSAGE HANDLER
-# ==============================
 
 @client.event
 async def on_message(message):
@@ -333,7 +324,7 @@ async def on_message(message):
 
 
 # ==============================
-# CSV SLATE ENGINE (RESTORED)
+# CSV SLATE ENGINE
 # ==============================
 
     if not message.attachments:
@@ -370,12 +361,14 @@ async def on_message(message):
             if not match:
                 continue
 
-            wins=int(match.group(2))-int(match.group(1))
+            losses=int(match.group(1))
             total=int(match.group(2))
+            wins=total-losses
+            pct=wins/total
 
             tier="normal"
 
-            if wins>=40:
+            if total>=40 and pct>=0.91:
                 tier="nuke"
             elif wins<=22:
                 tier="caution"
