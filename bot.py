@@ -1,6 +1,4 @@
 import discord
-import csv
-import io
 import re
 import os
 from datetime import datetime, timedelta, timezone
@@ -11,9 +9,9 @@ if not TOKEN:
     raise ValueError("No TOKEN found.")
 
 ALLOWED_CHANNELS = [
-    1471792196582637728,
-    1474078126630768822,
-    1479241150996152340
+1471792196582637728,
+1474078126630768822,
+1479241150996152340
 ]
 
 FOUR_PLUS_CHANNEL = 1443356395935240302
@@ -26,7 +24,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-last_slate_messages = []
 
 # ==============================
 # 4+ PARSER
@@ -37,6 +34,9 @@ async def parse_four_plus(channel,start,end,limit=None):
     wins=0
     losses=0
     washes=0
+
+    normal_w=0
+    normal_l=0
 
     nuke_w=0
     nuke_l=0
@@ -71,28 +71,33 @@ async def parse_four_plus(channel,start,end,limit=None):
             is_nuke="☢️" in line
             is_caution="⚠️" in line
 
+            if "🧼" in line:
+                washes+=1
+                continue
+
             if "✅" in line:
+
                 wins+=1
 
                 if is_nuke:
                     nuke_w+=1
-
-                if is_caution:
+                elif is_caution:
                     caution_w+=1
+                else:
+                    normal_w+=1
 
             elif "❌" in line:
+
                 losses+=1
 
                 if is_nuke:
                     nuke_l+=1
-
-                if is_caution:
+                elif is_caution:
                     caution_l+=1
+                else:
+                    normal_l+=1
 
-            elif "🧼" in line:
-                washes+=1
-
-    return wins,losses,washes,nuke_w,nuke_l,caution_w,caution_l
+    return wins,losses,washes,normal_w,normal_l,caution_w,caution_l,nuke_w,nuke_l
 
 
 # ==============================
@@ -134,14 +139,17 @@ async def parse_totals(channel,start,end,limit=None):
             stake=float(unit_match.group(1))
 
             if "✅" in line:
+
                 wins+=1
                 units+=stake/1.2
 
             elif "❌" in line:
+
                 losses+=1
                 units-=stake
 
             elif "🪝" in line:
+
                 losses+=1
                 units-=stake
 
@@ -155,8 +163,6 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
-
-    global last_slate_messages
 
     if message.author.bot:
         return
@@ -176,21 +182,25 @@ async def on_message(message):
             start=None
             end=None
             limit=50
-            title="TEST"
+            title=f"TEST RECAP — {now.strftime('%b %-d')} (EST)"
 
         elif "daily" in content:
 
             start=(now-timedelta(days=1)).replace(hour=0,minute=0,second=0,microsecond=0)
             end=start+timedelta(days=1)
+
+            date_label=start.strftime("%b %-d")
+
+            title=f"DAILY RECAP — {date_label} (EST)"
             limit=None
-            title="DAILY"
 
         elif "monthly" in content:
 
             start=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
             end=now
+
+            title=f"MONTHLY RECAP — {now.strftime('%b %Y')}"
             limit=None
-            title="MONTHLY"
 
         else:
             return
@@ -202,10 +212,10 @@ async def on_message(message):
             four_channel=client.get_channel(FOUR_PLUS_CHANNEL)
             totals_channel=client.get_channel(TOTALS_CHANNEL)
 
-        fw,fl,fwash,nw,nl,cw,cl=await parse_four_plus(four_channel,start,end,limit)
+        fw,fl,fwash,nw,nl,cw,cl,kw,kl=await parse_four_plus(four_channel,start,end,limit)
         tw,tl,tunits=await parse_totals(totals_channel,start,end,limit)
 
-        recap=f"📊 **{title} RECAP (EST)**\n\n"
+        recap=f"📊 **{title}**\n\n"
 
         recap+="🏓 **4+ PLAYS**\n"
         recap+=f"Record: {fw}-{fl}"
@@ -215,8 +225,9 @@ async def on_message(message):
 
         recap+="\n\n"
 
-        recap+=f"☢️ Nukes: {nw}-{nl}\n"
-        recap+=f"⚠️ Cautions: {cw}-{cl}\n\n"
+        recap+=f"Normal {nw}-{nl}\n"
+        recap+=f"⚠️ {cw}-{cl}\n"
+        recap+=f"☢️ {kw}-{kl}\n\n"
 
         recap+="🏓 **TOTAL PLAYS**\n"
 
