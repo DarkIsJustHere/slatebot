@@ -288,16 +288,20 @@ async def on_message(message):
         recap=f"📊 **{title}**\n\n"
 
         recap+="🏓 **4+ PLAYS**\n"
-        recap+=f"Record: {fw}-{fl}"
 
-        if fwash>0:
-            recap+=f" ({fwash} Wash)"
+        if fw+fl+fwash == 0:
+            recap+="No plays graded.\n\n"
+        else:
+            recap+=f"Record: {fw}-{fl}"
 
-        recap+=f"\nUnits: {four_units:+.2f}U\n\n"
+            if fwash>0:
+                recap+=f" ({fwash} Wash)"
 
-        recap+=f"Normal {nw}-{nl}\n"
-        recap+=f"⚠️ {cw}-{cl}\n"
-        recap+=f"☢️ {kw}-{kl}\n\n"
+            recap+=f"\nUnits: {four_units:+.2f}U\n\n"
+
+            recap+=f"Normal {nw}-{nl}\n"
+            recap+=f"⚠️ {cw}-{cl}\n"
+            recap+=f"☢️ {kw}-{kl}\n\n"
 
         recap+="🏓 **TOTAL PLAYS**\n"
 
@@ -482,3 +486,4 @@ async def on_message(message):
 
 
 client.run(TOKEN)
+
